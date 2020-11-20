@@ -2,12 +2,11 @@
 import subprocess
 import re
 
-#Main body that will run the functions
 def main():
-    mySearch, count, con = user_search()
-    print( mySearch, count, con)
-
-#Get initial user search parameters for NCBI protein database
+    mySearch, progress = user_search()
+    if progress == True:
+        print(mySearch)
+        
 def user_search():
     happy = False
     while happy == False:
@@ -18,8 +17,8 @@ def user_search():
         happy = yesNo("Are these correct? Y/N:", "Please re-enter protein family and group.")
 
     pred = part = ""
-    ex_predict = yesNo("Do you wish to exclude predictive sequences? Y/N: ","")
-    ex_partial = yesNo("Do you wish to exclude partial sequences? Y/N: ","")
+    ex_predict = yesNo("Do you wish to exclude predictive sequences? Y/N: ", "")
+    ex_partial = yesNo("Do you wish to exclude partial sequences? Y/N: ", "")
 
     if ex_predict == True:
         pred = "NOT predicted"
@@ -27,29 +26,37 @@ def user_search():
     if ex_partial == True:
         part = "NOT partial"
 
-    mySearch = f"{tax}[Organism] AND {family}[Protein Family] {pred} {part}"
+    mySearch = "Aves[Organism] AND glucosE-6-phosPhatase[Protein Family] NOT predicted NOT partial"
+    res = subprocess.check_output(f"esearch -db protein -query \"{mySearch}\" | efetch -format docsum | grep \"<Title>\" ", shell=True)
 
-    res = str(subprocess.check_output(f"esearch -db protein -query \"{mySearch}\" | efetch -format docsum | grep \"<Title>\" | less", shell = True))
-    count = get_species(res)
-    print (count)
+    species = re.finditer(r'\[.*?\]', str(res))
 
-    return mySearch, count, con
-#get total number of results and number of different species
-def get_species(res):
-    new = re.sub("\[(.*?)\]", res)
-    return count
+    speciesList = []
+    for i in species:
+        speciesList.append(i.group(0).strip("[]"))
 
-#fetch the actual data?
+    totalResults = len(speciesList)
+    speciesNumber = len(set(speciesList))
+    
+    max_sequences = 1000
+    max_species = 500
+    progress = True
+
+    if totalResults > max_sequences:
+        progress = yesNo("Warning! Search resulted in more than 1000 sequences. \n do you wish to continue? Y/N: ", "Exiting")
+    if speciesNumber > max_species:
+        progress = yesNo("Warning! Search resulted in more than 1000 sequences. \n do you wish to continue? Y/N: ", "Exiting")
+    
+    return mySearch, progress
+
 def fetch_data(mySearch):
-
-
 
     return None
 
 
 
 
-#function to get user choice returns True or False
+
 def yesNo(question,reprompt):
     yes = ["y", "Y", "Yes", "YES", "yes"]
     no = ["n", "N", "No", "NO", "no"]
@@ -64,6 +71,6 @@ def yesNo(question,reprompt):
             return False
 
         print("Invalid input. Please answer Yes or No")
-#run
+
 if __name__ == '__main__':
     main()
