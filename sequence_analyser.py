@@ -124,11 +124,12 @@ def plot_top_250(blastResults, n):
 
     #taking top n number of sequences df[0] = heading
     max_seq = n
-    dfsubset = df[1:maxseqnumber]
-
+    dfsubset = df[0:max_seq]
     #collecting accession numbers of the top 250
     accNumbers = dfsubset["subjectacc."].tolist()
-
+    if len(accNumbers) < n:
+        accNumbers = accNumbers[:-1]
+    print(accNumbers)
     #preparing for a new seach of just the top 250
     mysearch = ' '.join(accNumbers)
     filename = "top250"
