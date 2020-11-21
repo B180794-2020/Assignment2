@@ -7,9 +7,9 @@ import subprocess
 def main():
     # Get user input of Taxonomy and Protein for search, choose to continue with search or not
     mysearch, progress, max = user_search()
-    
+
     if progress == True:
-        filename = fetch_fasta(mysearch, max)
+        filename = fetch_fasta(mysearch)
         conserved_sequence_analysis(filename, max)
 
 
@@ -34,8 +34,8 @@ def user_search():
     if ex_partial == True:
         part = "NOT partial"
     # Term that will be searched for on NCBI
-    mysearch = f"{tax} AND {family} {pred} {part}"
-    mysearch = "Aves[Organism] AND glucosE-6-phosPhatase[Protein Family] NOT predicted NOT partial"
+    mysearch = f"{tax}[Organism] AND {family}[Protein] {pred} {part}"
+
     # calling shell command of esearch with specified paramaters and piping results into grep that selects titles of each result
     res = subprocess.check_output(
         f"esearch -db protein -query \"{mysearch}\" | efetch -format docsum | grep -E \"<AccessionVersion>|<Title>\" ",
@@ -71,8 +71,8 @@ def user_search():
         for i in range(len(speciesList)):
             if speciesList[i] not in myDict.keys():
                 myDict[speciesList[i]] = acessionList[i]
-    print(len(myDict.keys()))
-    return mysearch, progress ,max_sequences
+
+    return mysearch, progress, max_sequences
 
 
 def fetch_fasta(mysearch):
@@ -80,8 +80,8 @@ def fetch_fasta(mysearch):
     filename = input("Enter filename: ") + ".fasta"
     # get fastafile
     subprocess.call(f"esearch -db protein -query \"{mysearch}\" | efetch -format fasta > {filename}", shell=True)
-    keep = yesNo("Do you wish to remove duplicate sequences? Y/N", "")
-    if keep == False:
+    keep = yesNo("Do you wish to remove duplicate sequences? This will also remove isoforms of the same protein. Y/N: ", "")
+    if keep == True:
         out = filename + ".keep.fasta"
         # EMBOSS skip redundant to identify duplicate sequences, keeps longer of two if identical
         subprocess.call(
@@ -91,21 +91,23 @@ def fetch_fasta(mysearch):
     else:
         return filename
 
+
 def conserved_sequence_analysis(filename, max):
-    #Names of files that will be created
+    # Names of files that will be created
     filenameout = filename + ".out"
     consensusSeq = filename + ".con"
     blastResults = filename + ".blast"
-    
-    #sequence alignment and finding a consensus sequence
-    subprocess.call(f"clustalo --force --threads 8 --maxnumseq {max} -i {filename} -o {filenameout}", shell = True)
-    subprocess.call(f"cons -datafile EBLOSUM62 -sequence {filenameout} -outseq {consensusSeq}", shell = True)
 
-    #BLAST
-    subprocess.call(f"makeblastdb -in {filename} -dbtype prot -out {filename}",shell = True)
-    subprocess.call(f"blastp -db {filename} -query {consensusSeq} -outfmt 7 > {blastResults}", shell = True)
-    
+    # sequence alignment and finding a consensus sequence
+    subprocess.call(f"clustalo --force --threads 8 --maxnumseq {max} -i {filename} -o {filenameout}", shell=True)
+    subprocess.call(f"cons -datafile EBLOSUM62 -sequence {filenameout} -outseq {consensusSeq}", shell=True)
+
+    # BLAST
+    subprocess.call(f"makeblastdb -in {filename} -dbtype prot -out {filename}", shell=True)
+    subprocess.call(f"blastp -db {filename} -query {consensusSeq} -outfmt 7 > {blastResults}", shell=True)
+
     return blastResults
+
 
 def yesNo(question, reprompt):
     yes = ["y", "Y", "Yes", "YES", "yes"]
