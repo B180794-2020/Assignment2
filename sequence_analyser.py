@@ -1,18 +1,21 @@
 #!/usr/bin/python3
-import subprocess
 import re
-import os
+import subprocess
+
 
 # Defining main body that will run the other functions in correct order/manner
 def main():
     # Get user input of Taxonomy and Protein for search, choose to continue with search or not
-    mySearch, progress = user_search()
+    mysearch, progress, max = user_search()
+    
     if progress == True:
-        print(mySearch)
+        filename = fetch_fasta(mysearch, max)
+        conserved_sequence_analysis(filename, max)
+
+
 # function for determining paramaters for user search
 def user_search():
     # loop for giving an option to change search after input in case a mistake was made
-
     progress = False
     while progress == False:
         # user input for Protein family and Taxonomy
@@ -22,81 +25,89 @@ def user_search():
         print(f"Protein family: {family}, Taxanomic group: {tax}")
         # choice to continue or not
         progress = yesNo("Are these correct? Y/N:", "Please re-enter protein family and group.")
-
     # promting the user to see if they want to exclude partial and or predicted sequences from their analysis
     pred = part = ""
     ex_predict = yesNo("Do you wish to exclude predicted sequences? Y/N: ", "")
     ex_partial = yesNo("Do you wish to exclude partial sequences? Y/N: ", "")
-
     if ex_predict == True:
         pred = "NOT predicted"
-
     if ex_partial == True:
         part = "NOT partial"
-
     # Term that will be searched for on NCBI
     mysearch = f"{tax} AND {family} {pred} {part}"
     mysearch = "Aves[Organism] AND glucosE-6-phosPhatase[Protein Family] NOT predicted NOT partial"
     # calling shell command of esearch with specified paramaters and piping results into grep that selects titles of each result
-    res = subprocess.check_output(f"esearch -db protein -query \"{mysearch}\" | efetch -format docsum | grep -E \"<AccessionVersion>|<Title>\" ", shell=True)
-
+    res = subprocess.check_output(
+        f"esearch -db protein -query \"{mysearch}\" | efetch -format docsum | grep -E \"<AccessionVersion>|<Title>\" ",
+        shell=True)
     # find [species names] that are in square brackets and accession numbers
     species = re.finditer(r"\[.*?\]", str(res))
     accession = re.finditer(r'<AccessionVersion>.*?</AccessionVersion>', str(res))
-
     # put species into a list wihout the brackets
     speciesList = []
     acessionList = []
-
     for i in species:
         speciesList.append(i.group(0).strip("[]"))
     for i in accession:
         acessionList.append(i.group(0).strip("<AccessionVersion></AccessionVersion>"))
-
     # total number of results in the list and number of unique species names
     totalResults = len(speciesList)
     speciesNumber = len(set(speciesList))
-
     # conditions for continuing process
     max_sequences = 1000
     max_species = 500
     progress = True
-
     # prompt user to continue based on n of seq and species
-    print(f"Number of Sequences: {totalResults}\nNumber of Species: {speciesNumber}" )
+    print(f"Number of Sequences: {totalResults}\nNumber of Species: {speciesNumber}")
     if totalResults > max_sequences:
-        progress = yesNo("Warning! Search resulted in more than 1000 sequences. \n do you wish to continue? Y/N: ", "Exiting")
+        progress = yesNo("Warning! Search resulted in more than 1000 sequences. \n do you wish to continue? Y/N: ",
+                         "Exiting")
     if speciesNumber > max_species:
-        progress = yesNo("Warning! Search resulted in more than 1000 sequences. \n do you wish to continue? Y/N: ", "Exiting")
-
-    # creating dictionary of unique species and their acession numbers, Newest result for a species prot 
+        progress = yesNo("Warning! Search resulted in more than 1000 sequences. \n do you wish to continue? Y/N: ",
+                         "Exiting")
+    # creating dictionary of unique species and their acession numbers, Newest result for a species prot
     myDict = {}
     if progress == True:
         for i in range(len(speciesList)):
             if speciesList[i] not in myDict.keys():
                 myDict[speciesList[i]] = acessionList[i]
-
     print(len(myDict.keys()))
+    return mysearch, progress ,max_sequences
 
-    return mysearch, progress
 
 def fetch_fasta(mysearch):
     # let user choose file name where fasta will be saved
     filename = input("Enter filename: ") + ".fasta"
     # get fastafile
-    subprocess.run(f"esearch -db protein -query \"{mysearch}\" | efetch -format fasta > {filename}")
+    subprocess.call(f"esearch -db protein -query \"{mysearch}\" | efetch -format fasta > {filename}", shell=True)
     keep = yesNo("Do you wish to remove duplicate sequences? Y/N", "")
-    
     if keep == False:
         out = filename + ".keep.fasta"
         # EMBOSS skip redundant to identify duplicate sequences, keeps longer of two if identical
-        subprocess.run(f"skipredundant - maxthreshold100.0 - minthreshold 100.0 - mode 2 - gapopen 0.0 - gapextend 0.0 - outseq {out} - datafile EBLOSUM62 - redundant \"\" {filename}")
+        subprocess.call(
+            f"skipredundant -maxthreshold 100.0 -minthreshold 100.0 -mode 2 -gapopen 0.0 -gapextend 0.0 -outseq {out} -datafile EBLOSUM62 -redundant \"\" {filename}",
+            shell=True)
         return out
     else:
         return filename
-    
 
-def yesNo(question,reprompt):
+def conserved_sequence_analysis(filename, max):
+    #Names of files that will be created
+    filenameout = filename + ".out"
+    consensusSeq = filename + ".con"
+    blastResults = filename + ".blast"
+    
+    #sequence alignment and finding a consensus sequence
+    subprocess.call(f"clustalo --force --threads 8 --maxnumseq {max} -i {filename} -o {filenameout}", shell = True)
+    subprocess.call(f"cons -datafile EBLOSUM62 -sequence {filenameout} -outseq {consensusSeq}", shell = True)
+
+    #BLAST
+    subprocess.call(f"makeblastdb -in {filename} -dbtype prot -out {filename}",shell = True)
+    subprocess.call(f"blastp -db {filename} -query {consensusSeq} -outfmt 7 > {blastResults}", shell = True)
+    
+    return blastResults
+
+def yesNo(question, reprompt):
     yes = ["y", "Y", "Yes", "YES", "yes"]
     no = ["n", "N", "No", "NO", "no"]
 
@@ -111,5 +122,7 @@ def yesNo(question,reprompt):
 
         print("Invalid input. Please answer Yes or No")
 
+
 if __name__ == '__main__':
     main()
+
