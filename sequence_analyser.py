@@ -1,16 +1,19 @@
 #!/usr/bin/python3
 import re
 import subprocess
+import pandas as pd
 
 
 # Defining main body that will run the other functions in correct order/manner
 def main():
     # Get user input of Taxonomy and Protein for search, choose to continue with search or not
-    mysearch, progress, max = user_search()
+    mysearch = user_search()
+    progress, max_seq = fetch_data(mysearch)
 
     if progress == True:
         filename = fetch_fasta(mysearch)
-        conserved_sequence_analysis(filename, max)
+        aligned, consensus, blastResults =  conserved_sequence_analysis(filename, max_seq)
+        plot_top_250(blastResults, 250)
 
 
 # function for determining paramaters for user search
@@ -36,6 +39,9 @@ def user_search():
     # Term that will be searched for on NCBI
     mysearch = f"{tax}[Organism] AND {family}[Protein] {pred} {part}"
 
+    return mysearch
+
+def fetch_data(mysearch):
     # calling shell command of esearch with specified paramaters and piping results into grep that selects titles of each result
     res = subprocess.check_output(
         f"esearch -db protein -query \"{mysearch}\" | efetch -format docsum | grep -E \"<AccessionVersion>|<Title>\" ",
@@ -46,6 +52,7 @@ def user_search():
     # put species into a list wihout the brackets
     speciesList = []
     acessionList = []
+
     for i in species:
         speciesList.append(i.group(0).strip("[]"))
     for i in accession:
@@ -59,30 +66,26 @@ def user_search():
     progress = True
     # prompt user to continue based on n of seq and species
     print(f"Number of Sequences: {totalResults}\nNumber of Species: {speciesNumber}")
+
     if totalResults > max_sequences:
         progress = yesNo("Warning! Search resulted in more than 1000 sequences. \n do you wish to continue? Y/N: ",
                          "Exiting")
     if speciesNumber > max_species:
         progress = yesNo("Warning! Search resulted in more than 1000 sequences. \n do you wish to continue? Y/N: ",
                          "Exiting")
-    # creating dictionary of unique species and their acession numbers, Newest result for a species prot
-    myDict = {}
-    if progress == True:
-        for i in range(len(speciesList)):
-            if speciesList[i] not in myDict.keys():
-                myDict[speciesList[i]] = acessionList[i]
 
-    return mysearch, progress, max_sequences
+    return progress, max_sequences
 
 
 def fetch_fasta(mysearch):
     # let user choose file name where fasta will be saved
-    filename = input("Enter filename: ") + ".fasta"
+    filename = input("Enter filename: ")
     # get fastafile
     subprocess.call(f"esearch -db protein -query \"{mysearch}\" | efetch -format fasta > {filename}", shell=True)
-    keep = yesNo("Do you wish to remove duplicate sequences? This will also remove isoforms of the same protein. Y/N: ", "")
+    keep = yesNo("Do you wish to remove duplicate sequences? This will also remove isoforms of the same protein. Y/N: ",
+                 "")
     if keep == True:
-        out = filename + ".keep.fasta"
+        out = filename + ".keep"
         # EMBOSS skip redundant to identify duplicate sequences, keeps longer of two if identical
         subprocess.call(
             f"skipredundant -maxthreshold 100.0 -minthreshold 100.0 -mode 2 -gapopen 0.0 -gapextend 0.0 -outseq {out} -datafile EBLOSUM62 -redundant \"\" {filename}",
@@ -92,22 +95,51 @@ def fetch_fasta(mysearch):
         return filename
 
 
-def conserved_sequence_analysis(filename, max):
+def conserved_sequence_analysis(filename, max_seq):
     # Names of files that will be created
-    filenameout = filename + ".out"
-    consensusSeq = filename + ".con"
+    aligned = filename + ".out"
+    consensus = filename + ".con"
     blastResults = filename + ".blast"
 
     # sequence alignment and finding a consensus sequence
-    subprocess.call(f"clustalo --force --threads 8 --maxnumseq {max} -i {filename} -o {filenameout}", shell=True)
-    subprocess.call(f"cons -datafile EBLOSUM62 -sequence {filenameout} -outseq {consensusSeq}", shell=True)
+    subprocess.call(f"clustalo --force --threads 8 --maxnumseq {max_seq} -i {filename} -o {aligned}", shell=True)
+    subprocess.call(f"cons -datafile EBLOSUM62 -sequence {aligned} -outseq {consensus}", shell=True)
 
     # BLAST
     subprocess.call(f"makeblastdb -in {filename} -dbtype prot -out {filename}", shell=True)
-    subprocess.call(f"blastp -db {filename} -query {consensusSeq} -outfmt 7 > {blastResults}", shell=True)
+    subprocess.call(f"blastp -db {filename} -query {consensus} -outfmt 7 > {blastResults}", shell=True)
 
-    return blastResults
+    return aligned, consensus, blastResults
 
+
+def plot_top_250(blastResults, n):
+    #setting headings for dataframe, assumes blast with n rows and 12 columns (-outfmt 7)
+    headings = ["queryacc.", "subjectacc.", "% identity", "alignment_length",
+                "mismatches", "gap_opens", "q.start", "q.end", "s.start",
+                "s.end", "e-value", "bit_score"]
+    #setting up dataframe using pandas
+    df = pd.read_csv(f"{blastResults}", skiprows=5, names = headings,sep="\t")
+    #sorting according to bitscores
+    df.sort_values('bit_score', ascending=False, inplace=True)
+
+    #taking top n number of sequences df[0] = heading
+    max_seq = n
+    dfsubset = df[1:maxseqnumber]
+
+    #collecting accession numbers of the top 250
+    accNumbers = dfsubset["subjectacc."].tolist()
+
+    #preparing for a new seach of just the top 250
+    mysearch = ' '.join(accNumbers)
+    filename = "top250"
+    aligned = filename + ".aligned"
+
+    #searching for the top 250, aligning them and plotting the conservation using EMBOSS plotcon
+    subprocess.call(f"esearch -db protein -query \"{mysearch}\" | efetch -format fasta > {filename}", shell=True)
+    subprocess.call(f"clustalo --force --threads 8 --maxnumseq {max_seq} -i {filename} -o {aligned}", shell=True)
+    subprocess.call(f" plotcon -winsize 4 -graph x11  {aligned}", shell=True)
+
+    return aligned
 
 def yesNo(question, reprompt):
     yes = ["y", "Y", "Yes", "YES", "yes"]
