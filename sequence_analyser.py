@@ -1,13 +1,15 @@
 #!/usr/bin/python3
+import os
 import re
 import subprocess
 import readline
 import pandas as pd
-import os
 
+# Finding path to file location and directory, changing working directory to location
 abspath = os.path.abspath(__file__)
 dname = os.path.dirname(abspath)
 os.chdir(dname)
+
 
 # Defining main body that will run the other functions in correct order/manner
 def main():
@@ -15,17 +17,18 @@ def main():
     mysearch = user_search()
     progress, max_seq = fetch_data(mysearch)
 
-    if progress == True:
+    if progress:
         filename = fetch_fasta(mysearch)
         aligned, consensus, blastResults = conserved_sequence_analysis(filename, max_seq)
-        accNumbers, top250 = Version_2_lot_top_250(filename, blastResults, aligned, 250)
-        findMotifs(aligned, accNumbers)
+        accnumbers, top250 = Version_2_lot_top_250(filename, blastResults, aligned, 250)
+        findMotifs(aligned, accnumbers)
+
 
 # function for determining paramaters for user search
 def user_search():
     # loop for giving an option to change search after input in case a mistake was made
     progress = False
-    while progress == False:
+    while not progress:
         # user input for Protein family and Taxonomy
         family = input("Enter protein family: ")
         tax = input("Enter Taxanomic group: ")
@@ -34,12 +37,14 @@ def user_search():
         # choice to continue or not
         progress = yesNo("Are these correct? Y/N: ", "Please re-enter protein family and group.")
     # promting the user to see if they want to exclude partial and or predicted sequences from their analysis
+    
     pred = part = ""
     ex_predict = yesNo("Do you wish to exclude predicted sequences? Y/N: ", "")
     ex_partial = yesNo("Do you wish to exclude partial sequences? Y/N: ", "")
-    if ex_predict == True:
+    
+    if ex_predict:
         pred = "NOT predicted"
-    if ex_partial == True:
+    if ex_partial:
         part = "NOT partial"
     # Term that will be searched for on NCBI
     mysearch = f"{tax}[Organism] AND {family}[Protein] {pred} {part}"
@@ -49,7 +54,9 @@ def user_search():
 
 def fetch_data(mysearch):
     # calling shell command of esearch with specified paramaters and piping results into grep that selects titles of each result
-    res = subprocess.check_output(f"esearch -db protein -query \"{mysearch}\" | efetch -format docsum | grep -E \"<AccessionVersion>|<Title>\" ", shell=True)
+    res = subprocess.check_output(
+        f"esearch -db protein -query \"{mysearch}\" | efetch -format docsum | grep -E \"<AccessionVersion>|<Title>\" ",
+        shell=True)
     # find [species names] that are in square brackets and accession numbers
     species = re.finditer(r"\[.*?\]", str(res))
     accession = re.finditer(r'<AccessionVersion>.*?</AccessionVersion>', str(res))
@@ -88,7 +95,7 @@ def fetch_fasta(mysearch):
     subprocess.call(f"esearch -db protein -query \"{mysearch}\" | efetch -format fasta > {filename}", shell=True)
     keep = yesNo("Do you wish to remove duplicate sequences? This will also remove isoforms of the same protein. Y/N: ",
                  "")
-    if keep == True:
+    if keep:
         out = filename + ".keep"
         # EMBOSS skip redundant to identify duplicate sequences, keeps longer of two if identical
         subprocess.call(
@@ -177,21 +184,22 @@ def Version_2_lot_top_250(filename, blastResults, aligned, n):
 
     # preparing for a new seach of just the top 250
 
-    subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned}  -n > {topFasta}", shell = True )
+    subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned} -n > {topFasta}", shell=True)
 
     # searching for the top 250, aligning them and plotting the conservation using EMBOSS plotcon
     subprocess.call(f"plotcon -winsize 4 -graph x11  {topFasta}", shell=True)
 
     return accNumbers, top250
 
+
 def findMotifs(aligned, accnumbers):
-    nameList= []
+    nameList = []
 
     for number in accnumbers:
         motifs = number + ".motif"
-        subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned}  -n > {number}", shell = True)
-        subprocess.call(f"patmatmotifs {number} -outfile {motifs}", shell = True)       
-        subprocess.call(f"rm {number}", shell = True)
+        subprocess.call(f"esearch -db protein -query \"{number}[accession]\" | efetch -format fasta > {number}", shell=True)
+        subprocess.call(f"patmatmotifs {number} -outfile {motifs}", shell=True)
+        subprocess.call(f"rm {number}", shell=True)
         nameList.append(motifs)
 
     myDic = {}
@@ -201,7 +209,9 @@ def findMotifs(aligned, accnumbers):
             lines = f.readlines()
             for line in lines:
                 if "length" in line:
-                    myDic[name]["length"] = line.strip("length = ")
+                    myDic[name] = {"legth": line.strip("length = ")}
+
+        subprocess.call(f"rm {name}", shell=True)
     print(myDic)
     return None
 
@@ -219,6 +229,7 @@ def yesNo(question, reprompt):
             return False
 
         print("Invalid input. Please answer Yes or No")
+
 
 if __name__ == '__main__':
     main()
