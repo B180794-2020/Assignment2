@@ -1,8 +1,13 @@
 #!/usr/bin/python3
 import re
 import subprocess
+import readline
 import pandas as pd
+import os
 
+abspath = os.path.abspath(__file__)
+dname = os.path.dirname(abspath)
+os.chdir(dname)
 
 # Defining main body that will run the other functions in correct order/manner
 def main():
@@ -12,7 +17,8 @@ def main():
 
     if progress == True:
         filename = fetch_fasta(mysearch)
-        aligned, consensus, blastResults =  conserved_sequence_analysis(filename, max_seq)
+        aligned, consensus, blastResults = conserved_sequence_analysis(filename, max_seq)
+        Version_2_lot_top_250(filename, blastResults, aligned, 250)
         plot_top_250(blastResults, 250)
 
 
@@ -27,7 +33,7 @@ def user_search():
 
         print(f"Protein family: {family}, Taxanomic group: {tax}")
         # choice to continue or not
-        progress = yesNo("Are these correct? Y/N:", "Please re-enter protein family and group.")
+        progress = yesNo("Are these correct? Y/N: ", "Please re-enter protein family and group.")
     # promting the user to see if they want to exclude partial and or predicted sequences from their analysis
     pred = part = ""
     ex_predict = yesNo("Do you wish to exclude predicted sequences? Y/N: ", "")
@@ -41,11 +47,10 @@ def user_search():
 
     return mysearch
 
+
 def fetch_data(mysearch):
     # calling shell command of esearch with specified paramaters and piping results into grep that selects titles of each result
-    res = subprocess.check_output(
-        f"esearch -db protein -query \"{mysearch}\" | efetch -format docsum | grep -E \"<AccessionVersion>|<Title>\" ",
-        shell=True)
+    res = subprocess.check_output(f"esearch -db protein -query \"{mysearch}\" | efetch -format docsum | grep -E \"<AccessionVersion>|<Title>\" ", shell=True)
     # find [species names] that are in square brackets and accession numbers
     species = re.finditer(r"\[.*?\]", str(res))
     accession = re.finditer(r'<AccessionVersion>.*?</AccessionVersion>', str(res))
@@ -113,34 +118,73 @@ def conserved_sequence_analysis(filename, max_seq):
 
 
 def plot_top_250(blastResults, n):
-    #setting headings for dataframe, assumes blast with n rows and 12 columns (-outfmt 7)
+    # setting headings for dataframe, assumes blast with n rows and 12 columns (-outfmt 7)
     headings = ["queryacc.", "subjectacc.", "% identity", "alignment_length",
                 "mismatches", "gap_opens", "q.start", "q.end", "s.start",
                 "s.end", "e-value", "bit_score"]
-    #setting up dataframe using pandas
-    df = pd.read_csv(f"{blastResults}", skiprows=5, names = headings,sep="\t")
-    #sorting according to bitscores
+    # setting up dataframe using pandas
+    df = pd.read_csv(f"{blastResults}", skiprows=5, names=headings, sep="\t")
+    # sorting according to bitscores
     df.sort_values('bit_score', ascending=False, inplace=True)
 
-    #taking top n number of sequences df[0] = heading
+    # taking top n number of sequences
     max_seq = n
     dfsubset = df[0:max_seq]
-    #collecting accession numbers of the top 250
+
+    # collecting accession numbers of the top 250
     accNumbers = dfsubset["subjectacc."].tolist()
     if len(accNumbers) < n:
         accNumbers = accNumbers[:-1]
-    print(accNumbers)
-    #preparing for a new seach of just the top 250
+
+    # preparing for a new seach of just the top 250
     mysearch = ' '.join(accNumbers)
     filename = "top250"
     aligned = filename + ".aligned"
 
-    #searching for the top 250, aligning them and plotting the conservation using EMBOSS plotcon
+    # searching for the top 250, aligning them and plotting the conservation using EMBOSS plotcon
     subprocess.call(f"esearch -db protein -query \"{mysearch}\" | efetch -format fasta > {filename}", shell=True)
     subprocess.call(f"clustalo --force --threads 8 --maxnumseq {max_seq} -i {filename} -o {aligned}", shell=True)
     subprocess.call(f" plotcon -winsize 4 -graph x11  {aligned}", shell=True)
 
     return aligned
+
+
+def Version_2_lot_top_250(filename, blastResults, aligned, n):
+    # setting headings for dataframe, assumes blast with n rows and 12 columns (-outfmt 7)
+    headings = ["queryacc.", "subjectacc.", "% identity", "alignment_length",
+                "mismatches", "gap_opens", "q.start", "q.end", "s.start",
+                "s.end", "e-value", "bit_score"]
+    # setting up dataframe using pandas
+    df = pd.read_csv(f"{blastResults}", skiprows=5, names=headings, sep="\t")
+    # sorting according to bitscores
+    df.sort_values('bit_score', ascending=False, inplace=True)
+
+    # taking top n number of sequences
+    max_seq = n
+    dfsubset = df[0:max_seq]
+
+    # collecting accession numbers of the top 250
+    accNumbers = dfsubset["subjectacc."].tolist()
+    if len(accNumbers) < n:
+        accNumbers = accNumbers[:-1]
+
+    top250 = filename + ".250"
+    topFasta = top250 + ".fasta"
+    
+    # automatically closes after loop
+    with open(top250, 'w') as f:
+        for num in accNumbers:
+            f.write(f"{num}\n")
+
+    # preparing for a new seach of just the top 250
+
+    subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned}  -n > {topFasta}", shell = True )
+
+    # searching for the top 250, aligning them and plotting the conservation using EMBOSS plotcon
+    subprocess.call(f" plotcon -winsize 4 -graph x11  {topFasta}", shell=True)
+
+    return aligned
+
 
 def yesNo(question, reprompt):
     yes = ["y", "Y", "Yes", "YES", "yes"]
