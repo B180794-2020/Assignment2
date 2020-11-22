@@ -2,8 +2,11 @@
 import os
 import re
 import subprocess
-import readline
 import pandas as pd
+
+#important to import readline despite none of its functions being spesifically called:
+#enables the use of backspace in the terminal without them being part of user inputs
+import readline
 
 # Finding path to file location and directory, changing working directory to location
 abspath = os.path.abspath(__file__)
@@ -20,7 +23,7 @@ def main():
     if progress:
         filename = fetch_fasta(mysearch)
         aligned, consensus, blastResults = conserved_sequence_analysis(filename, max_seq)
-        accnumbers, top250 = Version_2_lot_top_250(filename, blastResults, aligned, 250)
+        accnumbers = plot_top_250(filename, blastResults, aligned, 250)
         findMotifs(aligned, accnumbers)
 
 
@@ -37,11 +40,11 @@ def user_search():
         # choice to continue or not
         progress = yesNo("Are these correct? Y/N: ", "Please re-enter protein family and group.")
     # promting the user to see if they want to exclude partial and or predicted sequences from their analysis
-    
+
     pred = part = ""
     ex_predict = yesNo("Do you wish to exclude predicted sequences? Y/N: ", "")
     ex_partial = yesNo("Do you wish to exclude partial sequences? Y/N: ", "")
-    
+
     if ex_predict:
         pred = "NOT predicted"
     if ex_partial:
@@ -108,7 +111,7 @@ def fetch_fasta(mysearch):
 
 def conserved_sequence_analysis(filename, max_seq):
     # Names of files that will be created
-    aligned = filename + ".out"
+    aligned = filename + ".aligned"
     consensus = filename + ".con"
     blastResults = filename + ".blast"
 
@@ -155,7 +158,7 @@ def plot_top_250(blastResults, n):
     return aligned
 
 
-def Version_2_lot_top_250(filename, blastResults, aligned, n):
+def plot_top_250(filename, blastResults, aligned, n):
     # setting headings for dataframe, assumes blast with n rows and 12 columns (-outfmt 7)
     headings = ["queryacc.", "subjectacc.", "% identity", "alignment_length",
                 "mismatches", "gap_opens", "q.start", "q.end", "s.start",
@@ -171,57 +174,93 @@ def Version_2_lot_top_250(filename, blastResults, aligned, n):
 
     # collecting accession numbers of the top 250
     accNumbers = dfsubset["subjectacc."].tolist()
+
+    #removing nan incase there are less than n sequences in the initial test
     if len(accNumbers) < n:
         accNumbers = accNumbers[:-1]
 
+    # filenames
     top250 = filename + ".250"
     topFasta = top250 + ".fasta"
 
-    # automatically closes after loop
+    # creating a file containing the accnum of top 250
     with open(top250, 'w') as f:
         for num in accNumbers:
             f.write(f"{num}\n")
 
     # preparing for a new seach of just the top 250
 
-    subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned} -n > {topFasta}", shell=True)
+    subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned} -n {top250}> {topFasta}", shell=True)
 
     # searching for the top 250, aligning them and plotting the conservation using EMBOSS plotcon
     subprocess.call(f"plotcon -winsize 4 -graph x11  {topFasta}", shell=True)
+    # removing temporary files that were generated for each to be taken as an imput
 
-    return accNumbers, top250
+    subprocess.call(f"rm {top250}", shell=True)
+    subprocess.call(f"rm {topFasta}", shell=True)
+
+    #returns a list containing the top accnumbers
+    return accNumbers
 
 
 def findMotifs(aligned, accnumbers):
-    nameList = []
+    motifList = []
 
     for number in accnumbers:
+        with open(number, "w") as f:
+            f.write(f"{number}")
+
+        # file names for patmatmotif output and temp
         motifs = number + ".motif"
-        subprocess.call(f"esearch -db protein -query \"{number}[accession]\" | efetch -format fasta > {number}", shell=True)
-        subprocess.call(f"patmatmotifs {number} -outfile {motifs}", shell=True)
+        temp = "temp"
+
+        # finding the fasta of a protein based on accesion number and storing it in a temporary file
+        subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned} -n {number} > {temp}", shell=True)
+        subprocess.call(f"patmatmotifs {temp} -outfile {motifs}", shell=True)
+
+        # removing temporary files that were generated for each to be taken as an imput
         subprocess.call(f"rm {number}", shell=True)
-        nameList.append(motifs)
+        subprocess.call(f"rm {temp}", shell=True)
+        motifList.append(motifs)
 
     myDic = {}
-
-    for name in nameList:
-        with open(name, "r") as f:
+    # Constructing a dictinary containing the information from patmatmotifs
+    for motif in motifList:
+        # open report file of patmat, scan each line for key words, add only value
+        with open(motif) as f:
             lines = f.readlines()
             for line in lines:
-                if "length" in line:
-                    myDic[name] = {"legth": line.strip("length = ")}
+                if "Length" in line:
+                    length = line.split(" ")[2].strip("\n")
+                if "Start" in line:
+                    start = line.split(" ")[3]
+                if "End" in line:
+                    end = line.split(" ")[3]
+                if "Motif" in line:
+                    mot = line.split(" ")[2].strip("\n")
+            myDic[motif] = [mot, length, start, end]
 
-        subprocess.call(f"rm {name}", shell=True)
-    print(myDic)
+        # remove the report file after information has been extracted
+        subprocess.call(f"rm {motif}", shell=True)
+
+    headings =["Morif","Length","Start","End"]
+    df = pd.DataFrame.from_dict(myDic, orient='index', columns = headings)
+    print(df)
+    
     return None
 
+
 def yesNo(question, reprompt):
+    # list of possible approved answers for each option
     yes = ["y", "Y", "Yes", "YES", "yes"]
     no = ["n", "N", "No", "NO", "no"]
 
     invalid = False
-    while invalid == False:
+
+    # infinite loop if an answer other than one in the list is given
+    while not invalid:
         answer = input(question)
+        # returns true or false depending on answer
         if answer in yes:
             return True
         elif answer in no:
