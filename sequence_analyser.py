@@ -18,9 +18,8 @@ def main():
     if progress == True:
         filename = fetch_fasta(mysearch)
         aligned, consensus, blastResults = conserved_sequence_analysis(filename, max_seq)
-        Version_2_lot_top_250(filename, blastResults, aligned, 250)
-        plot_top_250(blastResults, 250)
-
+        accNumbers, top250 = Version_2_lot_top_250(filename, blastResults, aligned, 250)
+        findMotifs(aligned, accNumbers)
 
 # function for determining paramaters for user search
 def user_search():
@@ -170,7 +169,7 @@ def Version_2_lot_top_250(filename, blastResults, aligned, n):
 
     top250 = filename + ".250"
     topFasta = top250 + ".fasta"
-    
+
     # automatically closes after loop
     with open(top250, 'w') as f:
         for num in accNumbers:
@@ -181,10 +180,30 @@ def Version_2_lot_top_250(filename, blastResults, aligned, n):
     subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned}  -n > {topFasta}", shell = True )
 
     # searching for the top 250, aligning them and plotting the conservation using EMBOSS plotcon
-    subprocess.call(f" plotcon -winsize 4 -graph x11  {topFasta}", shell=True)
+    subprocess.call(f"plotcon -winsize 4 -graph x11  {topFasta}", shell=True)
 
-    return aligned
+    return accNumbers, top250
 
+def findMotifs(aligned, accnumbers):
+    nameList= []
+
+    for number in accnumbers:
+        motifs = number + ".motif"
+        subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned}  -n > {number}", shell = True)
+        subprocess.call(f"patmatmotifs {number} -outfile {motifs}", shell = True)       
+        subprocess.call(f"rm {number}", shell = True)
+        nameList.append(motifs)
+
+    myDic = {}
+
+    for name in nameList:
+        with open(name, "r") as f:
+            lines = f.readlines()
+            for line in lines:
+                if "length" in line:
+                    myDic[name]["length"] = line.strip("length = ")
+    print(myDic)
+    return None
 
 def yesNo(question, reprompt):
     yes = ["y", "Y", "Yes", "YES", "yes"]
@@ -200,7 +219,6 @@ def yesNo(question, reprompt):
             return False
 
         print("Invalid input. Please answer Yes or No")
-
 
 if __name__ == '__main__':
     main()
