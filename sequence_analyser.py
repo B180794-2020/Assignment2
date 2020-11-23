@@ -2,7 +2,6 @@
 import os
 import re
 import subprocess
-
 import pandas as pd
 
 # important to import readline despite none of its functions being spesifically called:
@@ -11,17 +10,17 @@ import readline
 
 # Finding path to file location and directory, changing working directory to location
 abspath = os.path.abspath(__file__)
-dname = os.path.dirname(abspath)
-os.chdir(dname)
+dir = os.path.dirname(abspath)
+os.chdir(dir)
 
 
 # Defining main body that will run the other functions in correct order/manner
 def main():
-    # Get user input of Taxonomy and Protein for search, choose to continue with search or not
-    mysearch, progress = user_search()
-
-    if progress:
-
+    new_search = True
+    while new_search:
+        # Get user input of Taxonomy and Protein for search, choose to continue with search or not
+        mysearch = user_search()
+        # Conduct search and fetch number of results, evaluate is there the required mininum of 3 seq
         progress, max_seq, number_of_results = fetch_data(mysearch)
 
         if progress:
@@ -29,6 +28,10 @@ def main():
             aligned, consensus, blastResults = conserved_sequence_analysis(filename, max_seq)
             accnumbers = plot_top_250(filename, blastResults, aligned, 250)
             find_motifs(aligned, accnumbers)
+        else:
+            print("Search has been cancelled")
+
+        new_search = yes_no("Would you like to do another search? Y/N ", "Exiting")
 
 
 # function for determining paramaters for user search
@@ -88,7 +91,7 @@ def fetch_data(mysearch):
     except subprocess.CalledProcessError:
         print("Error: There were no results for search")
         progress = False
-        return progress, 0
+        return progress, 0 , 0
 
     # find [species names] that are in square brackets and accession numbers
     species = re.finditer(r"\[.*?\]", str(res))
@@ -117,7 +120,7 @@ def fetch_data(mysearch):
     if species_number > max_species:
         progress = yes_no("Warning! Search resulted in more than 500 species. \n do you wish to continue? Y/N: ",
                           "Exiting")
-    if total_results < 1:
+    if total_results < 3:
         print("Not enough sequences in search result to conduct analysis")
         progress = False
 
@@ -126,12 +129,12 @@ def fetch_data(mysearch):
 
 def fetch_fasta(mysearch, number_of_results):
     # let user choose file name where fasta will be saved
-    filename = input("Enter filename: ")
+    filename = input("Enter filename: ").lower()
     # get fasta files
     subprocess.call(f"esearch -db protein -query \"{mysearch}\" | efetch -format fasta > {filename}", shell=True)
     remove = False
     # Only gives option to remove seq if there are more than 3 of them
-    if number_of_results > 1:
+    if number_of_results > 3:
         remove = yes_no(
             "Do you wish to remove duplicate sequences? This will also remove isoforms of the same protein. Y/N: ", "")
     if remove:
@@ -140,6 +143,21 @@ def fetch_fasta(mysearch, number_of_results):
         subprocess.call(
             f"skipredundant -maxthreshold 100.0 -minthreshold 100.0 -mode 2 -gapopen 0.0 -gapextend 0.0 -outseq {out} -datafile EBLOSUM62 -redundant \"\" {filename}",
             shell=True)
+        # Counting the number of sequences in the .keep file
+        with open(out) as f:
+            sequence_count = 0
+            lines = f.readlines()
+            for line in lines:
+                #each line that starts with a > should indicate a sequence
+                if ">" in line:
+                    sequence_count +=1
+        #checking that there are atleats 3
+        if sequence_count < 3:
+            print("Not enough sequences after removing redundant sequences.")
+            print("Reverting to using original full list of sequences.")
+            subprocess.call(f"rm {out}", shell=True)
+            return filename
+
         return out
     else:
         return filename
@@ -233,6 +251,8 @@ def find_motifs(aligned, accnumbers):
         # open report file of patmat, scan each line for key words, add only value
         with open(motif) as f:
             lines = f.readlines()
+            # If no motifs then return as empty strings
+            mot = length = start = end = ""
             for line in lines:
                 if "Length" in line:
                     length = line.split(" ")[2].strip("\n")
@@ -263,14 +283,14 @@ def yes_no(question, reprompt):
 
     # infinite loop if an answer other than one in the list is given
     while not invalid:
-        while True: 
+        while True:
             try:
                 answer = input(question)
                 break
             except KeyboardInterrupt:
                 print("Error: KeyboardInterrupr")
                 print("Try again: ")
-                
+
         # returns true or false depending on answer
         if answer in yes:
             return True
