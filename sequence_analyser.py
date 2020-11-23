@@ -2,6 +2,7 @@
 import os
 import re
 import subprocess
+
 import pandas as pd
 
 # important to import readline despite none of its functions being spesifically called:
@@ -26,12 +27,13 @@ def main():
         if progress:
             filename = fetch_fasta(mysearch, number_of_results)
             aligned, consensus, blastResults = conserved_sequence_analysis(filename, max_seq)
-            accnumbers = plot_top_250(filename, blastResults, aligned, 250)
+            accnumbers, save = plot_top_250(filename, blastResults, aligned, 250)
             find_motifs(aligned, accnumbers)
         else:
             print("Search has been cancelled")
 
-        new_search = yes_no("Would you like to do another search? Y/N ", "Exiting")
+        new_search = yes_no("\033[1;32;40m Would you like to do another search? Y/N ", "Exiting")
+        print("\033[1;37;40m ")
 
 
 # function for determining paramaters for user search
@@ -44,13 +46,15 @@ def user_search():
         # user input for Protein family and Taxonomy
         # if keyboard is interrupted loop is broke, one or the other == "", progress is therefore False
         try:
-            family = input("Enter protein family: ")
+            family = input("\033[1;32;40m Enter protein family: ")
+            print("\033[1;37;40m ")
         except KeyboardInterrupt:
             print("Error: Keyboardinterrupt")
             return "", False
 
         try:
-            tax = input("Enter Taxanomic group: ")
+            tax = input("\033[1;32;40m Enter Taxanomic group: ")
+            print("\033[1;37;40m ")
         except KeyboardInterrupt:
             print("Error: Keyboardinterrupt")
             return "", False
@@ -70,7 +74,7 @@ def user_search():
     ex_partial = yes_no("Do you wish to exclude partial sequences? Y/N: ", "")
 
     if ex_predict:
-        pred = "NOT predicted"
+        pred = "NOT predicted NOT hypothetical"
     if ex_partial:
         part = "NOT partial"
     # Term that will be searched for on NCBI
@@ -85,13 +89,14 @@ def fetch_data(mysearch):
     # calling shell command of esearch with specified paramaters
     # piping results into grep that selects titles of each result
     try:
+        print("Conducting search...")
         res = subprocess.check_output(
             f"esearch -db protein -query \"{mysearch}\" | efetch -format docsum | grep -E \"<AccessionVersion>|<Title>\" ",
             shell=True)
     except subprocess.CalledProcessError:
         print("Error: There were no results for search")
         progress = False
-        return progress, 0 , 0
+        return progress, 0, 0
 
     # find [species names] that are in square brackets and accession numbers
     species = re.finditer(r"\[.*?\]", str(res))
@@ -129,8 +134,10 @@ def fetch_data(mysearch):
 
 def fetch_fasta(mysearch, number_of_results):
     # let user choose file name where fasta will be saved
-    filename = input("Enter filename: ").lower()
+    filename = input("\033[1;32;40m Enter filename: ").lower()
+    print("\033[1;37;40m ")
     # get fasta files
+    print("Fetching Fasta files from NCBI protein database...")
     subprocess.call(f"esearch -db protein -query \"{mysearch}\" | efetch -format fasta > {filename}", shell=True)
     remove = False
     # Only gives option to remove seq if there are more than 3 of them
@@ -140,18 +147,21 @@ def fetch_fasta(mysearch, number_of_results):
     if remove:
         out = filename + ".keep"
         # EMBOSS skip redundant to identify duplicate sequences, keeps longer of two if identical
+        print("Removing redundant...")
         subprocess.call(
             f"skipredundant -maxthreshold 100.0 -minthreshold 100.0 -mode 2 -gapopen 0.0 -gapextend 0.0 -outseq {out} -datafile EBLOSUM62 -redundant \"\" {filename}",
             shell=True)
         # Counting the number of sequences in the .keep file
+        print("Checking remaining files...")
         with open(out) as f:
             sequence_count = 0
             lines = f.readlines()
             for line in lines:
-                #each line that starts with a > should indicate a sequence
+                # each line that starts with a > should indicate a sequence
                 if ">" in line:
-                    sequence_count +=1
-        #checking that there are atleats 3
+                    sequence_count += 1
+        # checking that there are atleats 3
+        print(f"Remaining files: {sequence_count}")
         if sequence_count < 3:
             print("Not enough sequences after removing redundant sequences.")
             print("Reverting to using original full list of sequences.")
@@ -170,11 +180,15 @@ def conserved_sequence_analysis(filename, max_seq):
     blast_results = filename + ".blast"
 
     # sequence alignment and finding a consensus sequence
+    print("Aligning sequences...")
     subprocess.call(f"clustalo --force --threads 8 --maxnumseq {max_seq} -i {filename} -o {aligned}", shell=True)
+    print("Finding consensus sequence...")
     subprocess.call(f"cons -datafile EBLOSUM62 -sequence {aligned} -outseq {consensus}", shell=True)
 
     # BLAST
+    print("Constucting Blast database...")
     subprocess.call(f"makeblastdb -in {filename} -dbtype prot -out {filename}", shell=True)
+    print("Conducting blast search with consensus sequence...")
     subprocess.call(f"blastp -db {filename} -query {consensus} -outfmt 7 > {blast_results}", shell=True)
 
     return aligned, consensus, blast_results
@@ -194,6 +208,7 @@ def plot_top_250(filename, blast_results, aligned, n):
     max_seq = n
     dfsubset = df[0:max_seq]
 
+    print(f"Finding top {n} for plotting sequence conservation...")
     # collecting accession numbers of the top 250
     acc_numbers = dfsubset["subjectacc."].tolist()
 
@@ -211,37 +226,46 @@ def plot_top_250(filename, blast_results, aligned, n):
             f.write(f"{num}\n")
 
     # preparing for a new seach of just the top 250
-
+    print(f"Fetching top {n} for plotting sequence conservation...")
     subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned} -n {top250}> {top_fasta}", shell=True)
 
+    save = input("\033[1;32;40m Choose filename for saving Conservation plot: ") + ".plot"
+    print("\033[1;37;40m ")
     # searching for the top 250, aligning them and plotting the conservation using EMBOSS plotcon
-    subprocess.call(f"plotcon -scorefile EBLOSUM62 -winsize 4 -graph x11  {top_fasta}", shell=True)
+    subprocess.call(f"plotcon -scorefile EBLOSUM62 -winsize 4 -graph x11 -goutfile {save} {top_fasta}", shell=True)
 
     # removing temporary files that were generated for each to be taken as an imput
     subprocess.call(f"rm {top250}", shell=True)
     subprocess.call(f"rm {top_fasta}", shell=True)
 
     # returns a list containing the top accnumbers
-    return acc_numbers
+    return acc_numbers, save
 
 
 def find_motifs(aligned, accnumbers):
+    print(f"Seaching for protein motifs...")
     motif_list = []
 
+    # Blast may have more than one alignment for each sequence, multiple times diffrentiate by ID
+    seq_id = 0
+
+    # creating temp files for input into pullseq containing the sequence accnumber
     for number in accnumbers:
-        with open(number, "w") as f:
+        seq_id += 1
+        filename = number + "." + str(seq_id)
+        with open(filename, "w") as f:
             f.write(f"{number}")
 
         # file names for patmatmotif output and temp
-        motifs = number + ".motif"
+        motifs = filename + ".motif"
         temp = "temp"
 
         # finding the fasta of a protein based on accesion number and storing it in a temporary file
-        subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned} -n {number} > {temp}", shell=True)
-        subprocess.call(f"patmatmotifs {temp} -outfile {motifs}", shell=True)
+        subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned} -n {filename} > {temp}", shell=True)
+        subprocess.call(f"patmatmotifs {temp} -outfile {motifs}", shell=True, stdout=open(os.devnull, 'wb'))
 
         # removing temporary files that were generated for each to be taken as an imput
-        subprocess.call(f"rm {number}", shell=True)
+        subprocess.call(f"rm {filename}", shell=True)
         subprocess.call(f"rm {temp}", shell=True)
         motif_list.append(motifs)
 
@@ -255,11 +279,11 @@ def find_motifs(aligned, accnumbers):
             mot = length = start = end = ""
             for line in lines:
                 if "Length" in line:
-                    length = line.split(" ")[2].strip("\n")
+                    length = int(line.split(" ")[2].strip("\n"))
                 if "Start" in line:
-                    start = line.split(" ")[3]
+                    start = int(line.split(" ")[3])
                 if "End" in line:
-                    end = line.split(" ")[3]
+                    end = int(line.split(" ")[3])
                 if "Motif" in line:
                     mot = line.split(" ")[2].strip("\n")
             my_dic[motif] = [mot, length, start, end]
@@ -269,9 +293,13 @@ def find_motifs(aligned, accnumbers):
 
     headings = ["Motif", "Length", "Start", "End"]
     df = pd.DataFrame.from_dict(my_dic, orient='index', columns=headings)
-    print(df)
 
-    return None
+    save = input("\033[1;32;40m Input filename for motifs: ")
+    print("\033[1;37;40m ")
+
+    with open(save, "w") as f:
+        df.to_string(f)
+    return True
 
 
 def yes_no(question, reprompt):
@@ -285,7 +313,8 @@ def yes_no(question, reprompt):
     while not invalid:
         while True:
             try:
-                answer = input(question)
+                answer = input(f"\033[1;32;40m {question}")
+                print("\033[1;37;40m ")
                 break
             except KeyboardInterrupt:
                 print("Error: KeyboardInterrupr")
