@@ -1,13 +1,14 @@
 #!/usr/bin/python3
 import os
 import re
+import string
 import subprocess
 
 import pandas as pd
 
 # important to import readline despite none of its functions being spesifically called:
-# enables the use of backspace in the terminal without them being part of user inputs
 import readline
+# enables the use of backspace in the terminal without them being part of user inputs
 # Finding path to file location and directory, changing working directory to location
 abspath = os.path.abspath(__file__)
 mydir = os.path.dirname(abspath)
@@ -20,10 +21,13 @@ def main():
     new_search = True
     threads = 16
     number_of_top = 250
+    max_sequences = 1000
+    max_species = 300
 
     # fields to limit search results
     field_one = "[Protein Family]"
     field_two = "[Organism]"
+    pullseq = "/localdisk/data/BPSM/Assignment2/pullseq"
 
     while new_search:
         # Get user input of Taxonomy and Protein for search, choose to continue with search or not
@@ -31,7 +35,7 @@ def main():
 
         if progress:
             # Conduct search and fetch number of results, evaluate is there the required minimum of 3 seq
-            progress, max_seq, number_of_results = fetch_data(mysearch)
+            progress, max_seq, number_of_results = fetch_data(mysearch, max_sequences, max_species)
 
             # if there are enough sequences and the user wishes to continue
             if progress:
@@ -41,9 +45,10 @@ def main():
                 # generates blast results, the consensus sequence and aligned sequence fastas
                 aligned, consensus, blast_results = conserved_sequence_analysis(filename, max_seq, threads)
                 # plots the conservation of the top desired number of results, by default 250. Uses bit scores to sort top
-                accnumbers, save = plot_top_250(filename, blast_results, aligned, number_of_top)
+                accnumbers, save = plot_top_250(filename, blast_results, aligned, number_of_top, pullseq)
                 # finds known motifs from the PROSITE database based on the aligned sequences
-                find_motifs(aligned, accnumbers)
+                find_motifs(aligned, accnumbers, pullseq)
+                wildcard(filename, aligned, accnumbers, pullseq)
             else:
                 print("Search has been cancelled")
         else:
@@ -67,6 +72,9 @@ def user_search(field_one, field_two):
         try:
             input_one = input(f"\033[1;32;40m Enter your desired {field_one}: ")
             print("\033[1;37;40m ")
+            if not check_input(input_one):
+                return "", False
+
         except KeyboardInterrupt:
             print("Error: Keyboardinterrupt")
             return "", False
@@ -75,6 +83,9 @@ def user_search(field_one, field_two):
         try:
             input_two = input(f"\033[1;32;40m Enter {field_two}: ")
             print("\033[1;37;40m ")
+            if not check_input(input_two):
+                return "", False
+
         except KeyboardInterrupt:
             print("Error: Keyboardinterrupt")
             return "", False
@@ -107,7 +118,7 @@ def user_search(field_one, field_two):
 # function for fetching the data of how many search results there are for the search.
 # takes a string containing the query as an argument. Returns whether the search should progress (boolean)
 # maximum number of sequences (int) and number of total results (int)
-def fetch_data(mysearch):
+def fetch_data(mysearch, max_sequences, max_species):
     # calling shell command of esearch with specified parameters
     # piping results into grep that selects titles of each result
     try:
@@ -135,8 +146,7 @@ def fetch_data(mysearch):
     total_results = len(species_list)
     species_number = len(set(species_list))
     # conditions for continuing process
-    max_sequences = 1000
-    max_species = 500
+
     progress = True
     # prompt user to continue based on n of seq and species
     print(f"Number of Sequences: {total_results}\nNumber of Species: {species_number}")
@@ -162,8 +172,12 @@ def fetch_data(mysearch):
 # Option to exclude duplicate sequences by calling EMBOSS con. Returns a filename of the fasta files
 def fetch_fasta(mysearch, number_of_results):
     # let user choose file name where fasta will be saved
-    filename = input("\033[1;32;40m Enter filename: ").lower()
-    print("\033[1;37;40m ")
+    while True:
+        filename = input("\033[1;32;40m Enter filename: ").lower()
+        print("\033[1;37;40m ")
+        if check_input(filename):
+            break
+
     # get fasta files
     print("Fetching Fasta files from NCBI protein database...")
     subprocess.call(f"esearch -db protein -query \"{mysearch}\" | efetch -format fasta > {filename}", shell=True)
@@ -179,10 +193,11 @@ def fetch_fasta(mysearch, number_of_results):
         subprocess.call(
             f"skipredundant -maxthreshold 100.0 -minthreshold 100.0 -mode 2 -gapopen 0.0 -gapextend 0.0 -outseq {out} -datafile EBLOSUM62 -redundant \"\" {filename}",
             shell=True)
-        # Counting the number of sequences in the .keep file
+        # Counting the number of sequences in the .keep file as well as creating the file
         print("Checking remaining files...")
         with open(out) as f:
             sequence_count = 0
+            #list containing each line
             lines = f.readlines()
             for line in lines:
                 # each line that starts with a > should indicate a sequence
@@ -229,7 +244,7 @@ def conserved_sequence_analysis(filename, max_seq, threads):
 # Function for plotting the top results of based on the bit scores of the blast search
 # Takes the filename of the blast results and aligned sequences and the number of sequences required as arguments
 # Returns the filename of the saved image as save.ps and a list: accession numbers of top bit scores in order
-def plot_top_250(filename, blast_results, aligned, n):
+def plot_top_250(filename, blast_results, aligned, n, pullseq):
     # setting headings for dataframe, assumes blast with n rows and 12 columns (-outfmt 7)
     headings = ["queryacc.", "subjectacc.", "% identity", "alignment_length",
                 "mismatches", "gap_opens", "q.start", "q.end", "s.start",
@@ -242,6 +257,7 @@ def plot_top_250(filename, blast_results, aligned, n):
     # taking top n number of sequences
     max_seq = n
     dfsubset = df[0:max_seq]
+    print(dfsubset)
 
     print(f"Finding top {n} for plotting sequence conservation...")
     # collecting accession numbers of the top 250
@@ -258,6 +274,8 @@ def plot_top_250(filename, blast_results, aligned, n):
             acc = str(res.group(1))
             acc_numbers[i] = acc
 
+    acc_numbers = set(acc_numbers)
+
     # filename
     top250 = filename + ".250"
     top_fasta = top250 + ".fasta"
@@ -269,10 +287,14 @@ def plot_top_250(filename, blast_results, aligned, n):
 
     # preparing for a new seach of just the top 250
     print(f"Fetching top {n} for plotting sequence conservation...")
-    subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned} -n {top250}> {top_fasta}", shell=True)
+    subprocess.call(f"{pullseq} -i {aligned} -n {top250}> {top_fasta}", shell=True)
 
-    save = input("\033[1;32;40m Choose filename for saving Conservation plot: ") + ".plot"
-    print("\033[1;37;40m ")
+    while True:
+        save = input("\033[1;32;40m Choose filename for saving Conservation plot: ") + ".plot"
+        print("\033[1;37;40m ")
+        if check_input(save):
+            break
+
     # searching for the top 250, aligning them and plotting the conservation using EMBOSS plotcon
     subprocess.call(f"plotcon -goutfile {save} -scorefile EBLOSUM62 -winsize 4 -graph ps {top_fasta}", shell=True)
 
@@ -287,7 +309,7 @@ def plot_top_250(filename, blast_results, aligned, n):
 # Function to search the PROSITE database for motifs for each of the top sequences
 # Requires the filename containing the fasta sequences and a list containing the accession numbers as arguments
 # Creates a table of the results that is saved
-def find_motifs(aligned, acc_numbers):
+def find_motifs(aligned, acc_numbers, pullseq):
     print(f"Seaching for protein motifs...")
     motif_list = []
 
@@ -305,7 +327,7 @@ def find_motifs(aligned, acc_numbers):
         temp = "temp"
 
         # finding the fasta of a protein based on accesion number and storing it in a temporary file
-        subprocess.call(f"/localdisk/data/BPSM/Assignment2/pullseq -i {aligned} -n {number} > {temp}", shell=True)
+        subprocess.call(f"{pullseq} -i {aligned} -n {number} > {temp}", shell=True)
         subprocess.call(f"patmatmotifs {temp} -outfile {motifs}", shell=True)
 
         # removing temporary files that were generated for each to be taken as an imput
@@ -319,21 +341,21 @@ def find_motifs(aligned, acc_numbers):
         # open report file of patmat, scan each line for key words, add only value
         try:
             with open(motif) as f:
-                    lines = f.readlines()
-                    # If no motifs then return as empty strings
-                    mot = length = start = end = ""
-                    for line in lines:
-                        if "Length" in line:
-                            length = int(line.split(" ")[2].strip("\n"))
-                        if "Start" in line:
-                            start = int(line.split(" ")[3])
-                        if "End" in line:
-                            end = int(line.split(" ")[3])
-                        if "Motif" in line:
-                            mot = line.split(" ")[2].strip("\n")
-                    my_dic[motif] = [mot, length, start, end]
+                lines = f.readlines()
+                # If no motifs then return as empty strings
+                mot = length = start = end = ""
+                for line in lines:
+                    if "Length" in line:
+                        length = int(line.split(" ")[2].strip("\n"))
+                    if "Start" in line:
+                        start = int(line.split(" ")[3])
+                    if "End" in line:
+                        end = int(line.split(" ")[3])
+                    if "Motif" in line:
+                        mot = line.split(" ")[2].strip("\n")
+                my_dic[motif] = [mot, length, start, end]
 
-                # remove the report file after information has been extracted
+            # remove the report file after information has been extracted
             subprocess.call(f"rm {motif}", shell=True)
         except FileNotFoundError:
             print(f"Error: Pullseq was unable to find Fasta for accession number {motif}")
@@ -341,13 +363,44 @@ def find_motifs(aligned, acc_numbers):
 
     headings = ["Motif", "Length", "Start", "End"]
     df = pd.DataFrame.from_dict(my_dic, orient='index', columns=headings)
+    print(df)
 
-    save = input("\033[1;32;40m Input filename for motifs: ")
-    print("\033[1;37;40m ")
+    while True:
+        save = input("\033[1;32;40m Input filename for motifs: ")
+        print("\033[1;37;40m ")
+        if check_input(save):
+            break
 
     with open(save, "w") as f:
         df.to_string(f)
     return True
+
+
+# protein function analysis
+def wildcard(filename, aligned, acc_numbers, pullseq):
+
+    # filename
+    top250 = filename + ".250"
+    top_fasta = top250 + ".fasta"
+
+    # creating a file containing the accnum of top 250
+    with open(top250, "w") as f:
+        for num in acc_numbers:
+            f.write(f"{num}\n")
+
+    # preparing for a new seach of just the top 250
+    subprocess.call(f"{pullseq} -i {aligned} -n {top250}> {top_fasta}", shell=True)
+
+    while True:
+        save = input("\033[1;32;40m Choose filename for Predicted transmembrane report: ")
+
+        print("\033[1;37;40m ")
+        if check_input(save):
+            break
+
+    subprocess.call(f"tmap {top_fasta} -out {save} -goutfile {save + '.plot'} -graph ps", shell=True)
+    subprocess.call(f"rm {top250}", shell=True)
+    subprocess.call(f"rm {top_fasta}", shell=True)
 
 
 # function for determining True/False based on user input
@@ -379,6 +432,17 @@ def yes_no(question, reprompt):
             return False
 
         print("Invalid input. Please answer Yes or No")
+
+
+def check_input(user_input):
+    accepted_specials = [" ", ".", "-"]
+
+    for char in user_input:
+        if char not in string.digits and char not in string.ascii_letters and char not in accepted_specials:
+            print('Special characters are not allowed')
+            return False
+
+    return True
 
 
 if __name__ == '__main__':
